@@ -5,6 +5,7 @@ import {
   MarkdownView,
   EditorPosition,
   normalizePath,
+  WorkspaceLeaf, // Added for type safety with originalLeaf
 } from "obsidian";
 
 import axios from "axios";
@@ -319,12 +320,14 @@ export default class ImageUploader extends Plugin {
       return imageNames.includes(file.name);
     });
 
+    const uploadPromises: Promise<void>[] = [];
+
     for (const targetImage of targetImages) {
       const data = await this.app.vault.adapter.readBinary(normalizePath(targetImage.path));
       const blob = new Blob([data]);
       const file = new File([blob], targetImage.name, { type: 'image/png' });
 
-      this.uploadOrDispatch(file, targetImage.name).then(url => {
+      const uploadPromise = this.uploadOrDispatch(file, targetImage.name).then(url => {
         const imgMarkdownText = `![](${url})`
         const imageNameAndLink = imageNameAndLinks.find((item: { [key: string]: string }) => {
           return Object.keys(item)[0] === targetImage.name;
@@ -336,7 +339,14 @@ export default class ImageUploader extends Plugin {
       }, err => {
         new Notice('[Image Uploader] Upload unsuccessfully for ' + targetImage.name, 5000)
         console.log(err)
-      })
+      });
+
+      uploadPromises.push(uploadPromise);
+    }
+
+    if (uploadPromises.length > 0) {
+        await Promise.allSettled(uploadPromises);
+        new Notice(`Finished processing ${uploadPromises.length} image(s) for ${markdownView.file?.basename}.`, 3000);
     }
 
 
@@ -355,6 +365,59 @@ export default class ImageUploader extends Plugin {
 
   }
 
+
+  // --- NEW METHOD TO UPLOAD IMAGES IN ALL VAULT FILES ---
+  async uploadAllLocalImagesInVault(): Promise<void> {
+    const markdownFiles = this.app.vault.getMarkdownFiles(); // Returns TFile[]
+    if (!markdownFiles || markdownFiles.length === 0) {
+      new Notice("No markdown files found in the vault.", 3000);
+      return;
+    }
+
+    new Notice(`Starting to process ${markdownFiles.length} markdown file(s) in the vault. This may be disruptive as files will be opened sequentially.`, 5000);
+
+    const originalLeaf: WorkspaceLeaf | null = this.app.workspace.activeLeaf;
+    let filesProcessed = 0;
+    let filesWithErrors = 0;
+    const totalFiles = markdownFiles.length;
+
+    for (let i = 0; i < totalFiles; i++) {
+      const file = markdownFiles[i];
+      // It's important to get a leaf that can open Markdown files.
+      let leaf = this.app.workspace.getLeaf(false); 
+      if (!leaf) {
+          new Notice("Could not get a workspace leaf to open files. Aborting vault processing.", 5000);
+          if (originalLeaf) this.app.workspace.setActiveLeaf(originalLeaf, { focus: true });
+          return;
+      }
+      
+      try {
+        new Notice(`Processing file ${i + 1}/${totalFiles}: ${file.path}`, 3000);
+        await leaf.openFile(file, { active: true }); // Open and make active
+        
+        // Short delay to allow Obsidian to fully switch the view and ready the editor
+        await new Promise(resolve => setTimeout(resolve, 300)); 
+
+        await this.uploadLocalImages(); // Call the existing function, which works on the active view
+        filesProcessed++;
+      } catch (error) {
+        filesWithErrors++;
+        new Notice(`Error during vault-wide processing of ${file.path}: ${error.message}`, 7000);
+        console.error(`Error during vault-wide processing of ${file.path}:`, error);
+      }
+    }
+
+    if (originalLeaf && this.app.workspace.activeLeaf !== originalLeaf) {
+       await this.app.workspace.setActiveLeaf(originalLeaf, { focus: true });
+    }
+
+    let summaryMessage = `Vault processing complete. Processed ${filesProcessed} of ${totalFiles} file(s).`;
+    if (filesWithErrors > 0) {
+      summaryMessage += ` Encountered errors in ${filesWithErrors} file(s). Check console for details.`;
+    }
+    new Notice(summaryMessage, 7000);
+  }
+
   async onload(): Promise<void> {
     console.log("loading Image Uploader");
     await this.loadSettings();
@@ -368,9 +431,15 @@ export default class ImageUploader extends Plugin {
     );
 
     this.addCommand({
-      id: 'upload-all-local-images',
-      name: 'Upload All Local Images in This Page',
+      id: 'upload-all-local-images-in-this-page', 
+      name: 'Image Uploader: Upload All Local Images in This Page',
       callback: this.uploadLocalImages.bind(this),
+    });
+
+    this.addCommand({
+      id: 'upload-all-local-images-in-vault',
+      name: 'Image Uploader: Upload All Local Images in This Vault In One Go',
+      callback: this.uploadAllLocalImagesInVault.bind(this),
     });
   }
 

@@ -8,6 +8,7 @@ This plugin could resize(optional) and upload the image in your clipboard to any
 - 0.3.3
     - Add support for S3 compatible object storage (e.g., Cloudflare R2, AWS S3, MinIO).
     - Introduce "Uploader Service Type" setting to switch between "Generic API" and "S3 Compatible".
+	- Add 'Upload All Local Images in This Vault' command.
 - 0.3.2
 	- Add 'Upload All Local Images in This Page' command.
 - 0.3.1
@@ -98,6 +99,9 @@ The response of the upload request is:
 All you need is the image url `http://i.imgur.com/orunSTu.gif`, so `Image Url Path` should be `data.link`.
 
 #### Generic API Example: Lsky-Pro
+
+> [!WARNING]
+> The open-source version is no longer maintained and will not receive new feature updates or bug fixes.
 
 [Lsky-Pro](https://github.com/lsky-org/lsky-pro) is a open-sourced and self-hosted image hosting solution.
 
