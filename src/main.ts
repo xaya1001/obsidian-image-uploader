@@ -297,46 +297,46 @@ export default class ImageUploader extends Plugin {
         imageNameAndLinks.push({ [imageName]: imageLink });
         imageNames.push(imageName);
       }
-
-      const targetImages = allFiles.filter(file => {
-        return imageNames.includes(file.name);
-      });
-
-      for (const targetImage of targetImages) {
-        const data = await this.app.vault.adapter.readBinary(normalizePath(targetImage.path));
-        const blob = new Blob([data]);
-        const file = new File([blob], targetImage.name, { type: 'image/png' });
-
-        this.uploadOrDispatch(file, targetImage.name).then(url => {
-          const imgMarkdownText = `![](${url})`
-          const imageNameAndLink = imageNameAndLinks.find((item: { [key: string]: string }) => {
-            return Object.keys(item)[0] === targetImage.name;
-          });
-          if (imageNameAndLink) {
-            const imageLink = imageNameAndLink[targetImage.name];
-            this.replaceText(editor, imageLink, imgMarkdownText);
-          }
-        }, err => {
-          new Notice('[Image Uploader] Upload unsuccessfully for ' + targetImage.name, 5000)
-          console.log(err)
-        })
-      }
-
-
-      // const data = await this.app.vault.adapter.readBinary(imagePath);
-      // const blob = new Blob([data]);
-      // const file = new File([blob], imageName, { type: 'image/png' });
-
-      // this.uploadImage(file).then(url => {
-      //   const imgMarkdownText = `![](${url})`
-      //   this.replaceText(editor, imageLink, imgMarkdownText)
-      // }, err => {
-      //   new Notice('[Image Uploader] Upload unsuccessfully, fall back to default paste!', 5000)
-      //   console.log(err)
-
-      // })
-
     }
+
+    const targetImages = allFiles.filter(file => {
+      return imageNames.includes(file.name);
+    });
+
+    for (const targetImage of targetImages) {
+      const data = await this.app.vault.adapter.readBinary(normalizePath(targetImage.path));
+      const blob = new Blob([data]);
+      const file = new File([blob], targetImage.name, { type: 'image/png' });
+
+      this.uploadOrDispatch(file, targetImage.name).then(url => {
+        const imgMarkdownText = `![](${url})`
+        const imageNameAndLink = imageNameAndLinks.find((item: { [key: string]: string }) => {
+          return Object.keys(item)[0] === targetImage.name;
+        });
+        if (imageNameAndLink) {
+          const imageLink = imageNameAndLink[targetImage.name];
+          this.replaceText(editor, imageLink, imgMarkdownText);
+        }
+      }, err => {
+        new Notice('[Image Uploader] Upload unsuccessfully for ' + targetImage.name, 5000)
+        console.log(err)
+      })
+    }
+
+
+    // const data = await this.app.vault.adapter.readBinary(imagePath);
+    // const blob = new Blob([data]);
+    // const file = new File([blob], imageName, { type: 'image/png' });
+
+    // this.uploadImage(file).then(url => {
+    //   const imgMarkdownText = `![](${url})`
+    //   this.replaceText(editor, imageLink, imgMarkdownText)
+    // }, err => {
+    //   new Notice('[Image Uploader] Upload unsuccessfully, fall back to default paste!', 5000)
+    //   console.log(err)
+
+    // })
+
   }
 
   async onload(): Promise<void> {
