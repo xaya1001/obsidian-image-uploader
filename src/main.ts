@@ -267,6 +267,22 @@ export default class ImageUploader extends Plugin {
     // Get the current active MarkdownView
     const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!markdownView) return;
+
+    // Check current view state and switch if in Reading View
+    const viewState = markdownView.getState();
+    if (viewState.mode === 'preview') {
+      new Notice("Switching from Reading View to Live Preview to upload images...", 5000);
+      await markdownView.setState(
+        { ...viewState, mode: "source", source: false }, // Switch to Live Preview
+        { history: false } // Avoid adding this switch to navigation history
+      );
+      if (!markdownView.editor) {
+        new Notice("Failed to switch to an editable view or editor not available after switch. Aborting operation.", 7000);
+        return;
+      }
+      new Notice("Switched to Live Preview. Proceeding with image upload.", 5000);
+    }
+
     // Get Editor
     const editor = markdownView.editor;
     // Get all the text
