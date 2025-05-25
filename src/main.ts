@@ -109,6 +109,17 @@ export default class ImageUploader extends Plugin {
       let file: File = clipboardData!;
       ev.preventDefault();
 
+      const timestamp = Date.now();
+      // Get current note's title
+      let noteTitle = "Untitled"; // Default title if no active file or basename is empty
+      const currentFile = this.app.workspace.getActiveFile();
+      if (currentFile && currentFile.basename) { // Check if currentFile and its basename are not null/empty
+        noteTitle = currentFile.basename;
+      }
+      // Sanitize note title
+      const sanitizedNoteTitle = noteTitle.replace(/[^\p{L}\p{N}_-]/gu, '_').replace(/_{2,}/g, '_').replace(/^_+|_+$/g, '');
+      const uniqueFileName = `${sanitizedNoteTitle}-${timestamp}-${file.name}`;
+
       // set the placeholder text
       const randomString = (Math.random() * 10086).toString(36).substring(0, 8);
       const pastePlaceText = `![uploading...](${randomString})\n`
@@ -127,7 +138,7 @@ export default class ImageUploader extends Plugin {
         file = compressedFile as File
       }
 
-      this.uploadOrDispatch(file, file.name).then(url => {
+      this.uploadOrDispatch(file, uniqueFileName).then(url => {
         const imgMarkdownText = `![](${url})`
         this.replaceText(editor, pastePlaceText, imgMarkdownText)
       }, err => {
