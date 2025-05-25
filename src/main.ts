@@ -12,6 +12,9 @@ import objectPath from 'object-path';
 import ImageUploaderSettingTab from './settings-tab';
 import Compressor from 'compressorjs';
 
+// Import S3Client and PutObjectCommand from AWS SDK
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+
 import {
   PasteEventCopy,
 } from './custom-events';
@@ -37,6 +40,17 @@ interface ImageUploaderSettings {
   imageUrlPath: string;
   maxWidth: number;
   enableResize: boolean;
+
+  // New settings for S3 compatibility
+  uploaderServiceType: 'Generic API' | 'S3 Compatible';
+  s3AccessKeyId: string;
+  s3SecretAccessKey: string;
+  s3BucketName: string;
+  s3Region: string;
+  s3Endpoint?: string;       // Optional: For R2 and other S3-compatible services
+  s3PathPrefix?: string;     // Optional: For uploading to a subfolder
+  s3ForcePathStyle?: boolean;// Optional: For services like MinIO that might require path-style access
+  s3PublicUrlBase?: string;  // Optional: For custom domains or non-standard public URL construction
 }
 
 const DEFAULT_SETTINGS: ImageUploaderSettings = {
@@ -46,6 +60,17 @@ const DEFAULT_SETTINGS: ImageUploaderSettings = {
   imageUrlPath: "",
   maxWidth: 4096,
   enableResize: false,
+
+  // Defaults for new S3 settings
+  uploaderServiceType: 'Generic API',
+  s3AccessKeyId: '',
+  s3SecretAccessKey: '',
+  s3BucketName: '',
+  s3Region: '',
+  s3Endpoint: '',
+  s3PathPrefix: '',
+  s3ForcePathStyle: false,
+  s3PublicUrlBase: '',
 };
 
 interface pasteFunction {
@@ -101,7 +126,7 @@ export default class ImageUploader extends Plugin {
         file = compressedFile as File
       }
 
-      this.uploadImage(file).then(url => {
+      this.uploadOrDispatch(file, file.name).then(url => {
         const imgMarkdownText = `![](${url})`
         this.replaceText(editor, pastePlaceText, imgMarkdownText)
       }, err => {
@@ -115,7 +140,29 @@ export default class ImageUploader extends Plugin {
     }
   }
 
-  async uploadImage(image: File): Promise<string> {
+  // NEW: Method to decide which uploader to use
+  async uploadOrDispatch(file: File | ArrayBuffer, fileName: string): Promise<string> {
+    try {
+        if (this.settings.uploaderServiceType === 'S3 Compatible') {
+            return await this.uploadToS3(file, fileName);
+        } else {
+            return await this.uploadImageGeneric(file, fileName);
+        }
+    } catch (err) {
+        console.error("Upload failed:", err);
+        // A more specific notice might have been shown already by uploadToS3 or uploadImageGeneric
+        // If not, this serves as a general fallback notice.
+        if (!(err instanceof Error && err.message.includes("S3 configuration incomplete")) && 
+            !(err instanceof Error && err.message.includes("Upload failed"))) { // Avoid double notices
+             new Notice(`[Image Uploader] Upload failed: ${err.message || 'Unknown error'}`, 5000);
+        }
+        throw err; // Re-throw to be caught by pasteHandler or uploadLocalImages
+    }
+  }
+
+
+
+  async uploadImageGeneric(imageContent: File | ArrayBuffer, imageName: string): Promise<string> {
 
     return new Promise((resolve, reject) => {
       const formData = new FormData()
@@ -123,7 +170,7 @@ export default class ImageUploader extends Plugin {
 
       for (const key in uploadBody) {
         if (uploadBody[key] == "$FILE") {
-          formData.append(key, image, image.name)
+          formData.append(key, imageContent instanceof ArrayBuffer ? new Blob([imageContent]) : imageContent, imageName)
         }
         else {
           formData.append(key, uploadBody[key])
@@ -140,6 +187,81 @@ export default class ImageUploader extends Plugin {
       })
     })
   }
+
+  private async uploadToS3(fileContent: File | ArrayBuffer, fileName: string): Promise<string> {
+    const {
+        s3AccessKeyId,
+        s3SecretAccessKey,
+        s3BucketName,
+        s3Region,
+        s3Endpoint,
+        s3PathPrefix,
+        s3ForcePathStyle,
+        s3PublicUrlBase
+    } = this.settings;
+
+    if (!s3AccessKeyId || !s3SecretAccessKey || !s3BucketName || !s3Region) {
+        const errMsg = "S3 configuration is incomplete. Please check Access Key, Secret Key, Bucket Name, and Region in settings.";
+        new Notice(errMsg, 7000);
+        throw new Error(errMsg);
+    }
+
+    const client = new S3Client({
+        region: s3Region,
+        credentials: {
+            accessKeyId: s3AccessKeyId,
+            secretAccessKey: s3SecretAccessKey,
+        },
+        endpoint: s3Endpoint || undefined,
+        forcePathStyle: s3ForcePathStyle || false,
+    });
+
+    const keyPrefix = s3PathPrefix ? (s3PathPrefix.endsWith('/') ? s3PathPrefix : `${s3PathPrefix}/`) : '';
+    const key = keyPrefix + fileName;
+    
+    const body = fileContent instanceof File ? await fileContent.arrayBuffer() : fileContent;
+    const contentType = fileContent instanceof File ? fileContent.type : 'application/octet-stream';
+
+    const putObjectParams = {
+        Bucket: s3BucketName,
+        Key: key,
+        Body: body instanceof ArrayBuffer ? new Uint8Array(body) : body, // SDK expects Uint8Array or stream
+        ContentType: contentType,
+        // ACL: 'public-read', // Usually handled by bucket policy for better security. Uncomment if explicitly needed.
+    };
+
+    try {
+        await client.send(new PutObjectCommand(putObjectParams));
+
+        let publicUrl: string;
+        const encodedKey = key.split('/').map(encodeURIComponent).join('/'); // Ensure key components are URL-safe
+
+        if (s3PublicUrlBase) {
+            publicUrl = `${s3PublicUrlBase.replace(/\/$/, '')}/${encodedKey}`;
+        } else if (s3Endpoint) {
+            const endpointUrl = new URL(s3Endpoint);
+            if (s3ForcePathStyle) {
+                publicUrl = `${endpointUrl.protocol}//${endpointUrl.host}/${s3BucketName}/${encodedKey}`;
+            } else {
+                 // Standard for R2 and many S3-compatibles when custom endpoint is used
+                publicUrl = `${endpointUrl.protocol}//${endpointUrl.host}/${s3BucketName}/${encodedKey}`;
+                 // For Cloudflare R2, if endpoint is https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+                 // then this becomes https://<ACCOUNT_ID>.r2.cloudflarestorage.com/<BUCKET_NAME>/<OBJECT_KEY>
+            }
+        } else {
+            // Default AWS S3 URL (virtual-hosted style)
+            publicUrl = `https://${s3BucketName}.s3.${s3Region}.amazonaws.com/${encodedKey}`;
+        }
+        new Notice(`Image uploaded to S3: ${fileName}`, 3000);
+        return publicUrl;
+
+    } catch (error) {
+        console.error("S3 Upload Error:", error);
+        const errMsg = error instanceof Error ? error.message : String(error);
+        new Notice(`S3 Upload failed: ${errMsg}`, 7000);
+        throw error; // Re-throw to be caught by uploadOrDispatch
+    }
+}  
 
   async uploadLocalImages(): Promise<void> {
     // Get the current active MarkdownView
@@ -185,7 +307,7 @@ export default class ImageUploader extends Plugin {
         const blob = new Blob([data]);
         const file = new File([blob], targetImage.name, { type: 'image/png' });
 
-        this.uploadImage(file).then(url => {
+        this.uploadOrDispatch(file, targetImage.name).then(url => {
           const imgMarkdownText = `![](${url})`
           const imageNameAndLink = imageNameAndLinks.find((item: { [key: string]: string }) => {
             return Object.keys(item)[0] === targetImage.name;
@@ -195,7 +317,7 @@ export default class ImageUploader extends Plugin {
             this.replaceText(editor, imageLink, imgMarkdownText);
           }
         }, err => {
-          new Notice('[Image Uploader] Upload unsuccessfully', 5000)
+          new Notice('[Image Uploader] Upload unsuccessfully for ' + targetImage.name, 5000)
           console.log(err)
         })
       }
