@@ -220,13 +220,17 @@ export default class ImageUploader extends Plugin {
     const keyPrefix = s3PathPrefix ? (s3PathPrefix.endsWith('/') ? s3PathPrefix : `${s3PathPrefix}/`) : '';
     const key = keyPrefix + fileName;
     
-    const body = fileContent instanceof File ? await fileContent.arrayBuffer() : fileContent;
-    const contentType = fileContent instanceof File ? fileContent.type : 'application/octet-stream';
+    const body = fileContent instanceof File || fileContent instanceof Blob 
+        ? new Uint8Array(await fileContent.arrayBuffer()) 
+        : new Uint8Array(fileContent);
+    const contentType = fileContent instanceof File || fileContent instanceof Blob 
+        ? fileContent.type || 'application/octet-stream' 
+        : 'application/octet-stream';
 
     const putObjectParams = {
         Bucket: s3BucketName,
         Key: key,
-        Body: body instanceof ArrayBuffer ? new Uint8Array(body) : body, // SDK expects Uint8Array or stream
+        Body: body,
         ContentType: contentType,
         // ACL: 'public-read', // Usually handled by bucket policy for better security. Uncomment if explicitly needed.
     };
