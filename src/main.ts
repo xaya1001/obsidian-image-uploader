@@ -42,7 +42,7 @@ interface ImageUploaderSettings {
   maxWidth: number;
   enableResize: boolean;
 
-  // New settings for S3 compatibility
+  // settings for S3 compatibility
   uploaderServiceType: 'Generic API' | 'S3 Compatible';
   s3AccessKeyId: string;
   s3SecretAccessKey: string;
@@ -62,7 +62,7 @@ const DEFAULT_SETTINGS: ImageUploaderSettings = {
   maxWidth: 4096,
   enableResize: false,
 
-  // Defaults for new S3 settings
+  // Defaults for S3 settings
   uploaderServiceType: 'Generic API',
   s3AccessKeyId: '',
   s3SecretAccessKey: '',
@@ -141,7 +141,7 @@ export default class ImageUploader extends Plugin {
     }
   }
 
-  // NEW: Method to decide which uploader to use
+  // Method to decide which uploader to use
   async uploadOrDispatch(file: File | ArrayBuffer, fileName: string): Promise<string> {
     try {
         if (this.settings.uploaderServiceType === 'S3 Compatible') {
@@ -366,7 +366,7 @@ export default class ImageUploader extends Plugin {
   }
 
 
-  // --- NEW METHOD TO UPLOAD IMAGES IN ALL VAULT FILES ---
+  // --- METHOD TO UPLOAD IMAGES IN ALL VAULT FILES ---
   async uploadAllLocalImagesInVault(): Promise<void> {
     const markdownFiles = this.app.vault.getMarkdownFiles(); // Returns TFile[]
     if (!markdownFiles || markdownFiles.length === 0) {
@@ -376,18 +376,22 @@ export default class ImageUploader extends Plugin {
 
     new Notice(`Starting to process ${markdownFiles.length} markdown file(s) in the vault. This may be disruptive as files will be opened sequentially.`, 5000);
 
-    const originalLeaf: WorkspaceLeaf | null = this.app.workspace.activeLeaf;
+    // Store reference to original active view instead of deprecated activeLeaf
+    const originalView = this.app.workspace.getActiveViewOfType(MarkdownView);
     let filesProcessed = 0;
     let filesWithErrors = 0;
     const totalFiles = markdownFiles.length;
 
     for (let i = 0; i < totalFiles; i++) {
       const file = markdownFiles[i];
-      // It's important to get a leaf that can open Markdown files.
+      // Use getLeaf() without deprecated activeLeaf
       let leaf = this.app.workspace.getLeaf(false); 
       if (!leaf) {
           new Notice("Could not get a workspace leaf to open files. Aborting vault processing.", 5000);
-          if (originalLeaf) this.app.workspace.setActiveLeaf(originalLeaf, { focus: true });
+          // Restore original view if it exists
+          if (originalView) {
+            await this.app.workspace.setActiveLeaf(originalView.leaf, { focus: true });
+          }
           return;
       }
       
@@ -407,8 +411,9 @@ export default class ImageUploader extends Plugin {
       }
     }
 
-    if (originalLeaf && this.app.workspace.activeLeaf !== originalLeaf) {
-       await this.app.workspace.setActiveLeaf(originalLeaf, { focus: true });
+    // Restore original view if it exists and current active leaf is different
+    if (originalView && this.app.workspace.getActiveViewOfType(MarkdownView) !== originalView) {
+       await this.app.workspace.setActiveLeaf(originalView.leaf, { focus: true });
     }
 
     let summaryMessage = `Vault processing complete. Processed ${filesProcessed} of ${totalFiles} file(s).`;
