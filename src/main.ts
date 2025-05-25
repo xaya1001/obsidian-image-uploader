@@ -452,13 +452,13 @@ export default class ImageUploader extends Plugin {
 
     this.addCommand({
       id: 'upload-all-local-images-in-this-page', 
-      name: 'Image Uploader: Upload All Local Images in This Page',
+      name: 'Upload All Local Images in This Page',
       callback: this.uploadLocalImages.bind(this),
     });
 
     this.addCommand({
       id: 'upload-all-local-images-in-vault',
-      name: 'Image Uploader: Upload All Local Images in This Vault In One Go',
+      name: 'Upload All Local Images in This Vault In One Go',
       callback: this.uploadAllLocalImagesInVault.bind(this),
     });
   }
